@@ -1,14 +1,21 @@
-
 import Header from "../../components/Header";
-import { api } from "../../services/apiService";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Button from "../../components/Button";
 import DateInput from "../../components/DatePicker";
 import FormSelect from "../../components/FormSelect";
 import { createTheme } from "@mui/material/styles";
 import { ThemeProvider } from "@mui/material/styles";
 import { DataGrid } from "@mui/x-data-grid";
+import {
+  getFirestore,
+  collection,
+  query,
+  where,
+  getDocs,
+  getDoc, // Substituído de getDoc para getDocs
+} from "firebase/firestore";
 import * as XLSX from "xlsx";
+import { format } from "date-fns";
 
 import { Form } from "@unform/web";
 import { AreaComp, Container, Row } from "../../styles/global";
@@ -20,6 +27,8 @@ export default function Dashboard() {
   const [listProducts, setListProducts] = useState([]);
 
   const formRefFilter = useRef(null);
+
+  const db = getFirestore();
 
   const darkTheme = createTheme({
     palette: {
@@ -34,49 +43,65 @@ export default function Dashboard() {
     {
       field: "link",
       headerName: "Link Produto",
-      type: "number",
-      width: 110,
+      width: 510,
+      renderCell: (params) => (
+        <a href={params.row.link} target="_blank" rel="noopener noreferrer">
+          {params.row.link}
+        </a>
+      ),
     },
   ];
 
   const options = [
-    { value: "Placa de video", label: "Placa de video" },
+    { value: "Placa de vídeo", label: "Placa de vídeo" },
     { value: "Mouse", label: "Mouse" },
     { value: "Mousepad gamer", label: "Mousepad" },
     { value: "Gabinete", label: "Gabinete" },
     { value: "Teclado gamer", label: "Teclado gamer" },
     { value: "Monitor", label: "Monitor" },
   ];
-
   const handleDataChange = (event) => {
     setDataDoEvento(event.target.value);
   };
 
-  const handleFilterProducts = async (formData) => {
-    const { product } = formData;
-
+  const buscarProdutosPorData = async (data, product) => {
     try {
-      const response = await api.get(`/products/${dataDoEvento}/${product}`);
-      const productsObject = response.data;
+      const collectionRef = collection(db, data);
 
-      const productsArray = Object.values(productsObject);
+      const querySnapshot = await getDocs(collectionRef);
 
-      const productsWithIds = productsArray.map((product, index) => ({
-        ...product,
-        id: product.link || index,
-      }));
+      const documentosFiltrados = querySnapshot.docs
+        .filter((doc) => doc.id === product)
+        .map(async (doc) => {
+          const documentSnapshot = await getDoc(doc.ref);
 
-      const filteredProducts = productsWithIds.filter((product) => {
-        return !Object.values(product).some((value) => /N\/A/i.test(value));
-      });
+          if (documentSnapshot.exists()) {
+            const dadosDoDocumento = documentSnapshot.data();
+            const productsArray = Object.values(dadosDoDocumento);
 
-      setListProducts(filteredProducts);
+            const productsWithIds = productsArray.map((product, index) => ({
+              ...product,
+              id: product.link || index,
+            }));
+
+            const filteredProducts = productsWithIds.filter((product) => {
+              return !Object.values(product).some((value) =>
+                /N\/A/i.test(value)
+              );
+            });
+
+            setListProducts(filteredProducts);
+          } else {
+            toast.log("Não existe registro para essa data.");
+          }
+        });
+
+      await Promise.all(documentosFiltrados);
     } catch (err) {
-      toast.error(
-        "A data informada não coincide com as datas em que as varreduras foram realizadas."
-      );
+      toast.info("Não existe registro para essa data.");
     }
   };
+
   const handleExportToExcel = () => {
     if (listProducts.length === 0) {
       console.log("Nenhum produto para exportar.");
@@ -100,7 +125,7 @@ export default function Dashboard() {
       const ws = XLSX.utils.json_to_sheet(productsArray);
 
       // Adicionando estilos para tornar as linhas maiores
-      ws["!rows"] = [{ hpt: 30, hpx: 16 }];
+      ws["!rows"] = [{ hpt: 40, hpx: 26 }];
 
       // Adicionando estilos adicionais conforme necessário (por exemplo, bordas, cores, etc.)
 
@@ -109,17 +134,18 @@ export default function Dashboard() {
       // Salvando o arquivo Excel
       XLSX.writeFile(wb, "produtos.xlsx");
 
-      console.log("Exportação concluída.");
+      toast.success("Exportação concluída.");
     } catch (error) {
-      console.error("Erro ao exportar para Excel:", error);
+      toast.error("Erro ao exportar para Excel:", error);
     }
   };
+
 
   return (
     <>
       <Header />
       <Container>
-        <Form ref={formRefFilter} onSubmit={handleFilterProducts}>
+        <Form ref={formRefFilter}>
           <Row mgtop="20">
             <AreaComp wd="30" ptop="16px">
               <DateInput
@@ -140,26 +166,30 @@ export default function Dashboard() {
             <AreaComp wd="15" ptop="24px">
               <Button
                 Text="Buscar"
-                onClick={() => formRefFilter.current.submitForm()}
+                onClick={() =>
+                  buscarProdutosPorData(dataDoEvento, selectedOption)
+                }
               ></Button>
             </AreaComp>
             <AreaComp wd="15" ptop="24px">
               <Button
                 Text="Exportar"
                 onClick={() => handleExportToExcel()}
-                disabled={listProducts < 0}
+                disabled={listProducts.length === 0}
               ></Button>
             </AreaComp>
           </Row>
         </Form>
         <ThemeProvider theme={darkTheme}>
-          <div style={{ height: 400, width: "100%", padding: "10px" }}>
-            <DataGrid
-              rows={listProducts}
-              columns={columns}
-              pageSize={7}
-              pageSizeOptions={[5, 10]}
-            />
+          <div
+            style={{
+              height: 500,
+              width: "100%",
+              padding: "10px",
+              color: "#fff",
+            }}
+          >
+            <DataGrid rows={listProducts} columns={columns} />
           </div>
         </ThemeProvider>
       </Container>
